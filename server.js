@@ -176,7 +176,12 @@ function buildBostaPayload(shopifyOrder) {
 
   return {
     type:          10,           // 10 = delivery from warehouse (FBB)
-    specs,
+    specs: {
+      packageDetails: specs.map(s => ({
+        sku:      s.sku,
+        quantity: s.quantity,
+      }))
+    },
     dropOffAddress: {
       firstLine: address.firstLine,
       city:      address.city,
@@ -188,7 +193,7 @@ function buildBostaPayload(shopifyOrder) {
     },
     cod:           codAmount,
     notes:         `Shopify Order #${shopifyOrder.order_number || shopifyOrder.id}`,
-    allowToOpenPackage: true,     // customer can inspect before paying
+    allowToOpenPackage: true,
   };
 }
 
