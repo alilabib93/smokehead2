@@ -12,24 +12,12 @@ const CONFIG = {
 };
 
 const SKU_MAP = {
-  'BO-2143023':     'BO-2143023',
-  'BO-2143025':     'BO-2143025',
-  'BO-2143048':     'BO-2143048',
-  'BO-2754540':     'BO-2754540',
-  'BO-2143049-BLK': 'BO-2143049',
-  'BO-2143049-RED': 'BO-2143049',
-  'BO-2143049-GRN': 'BO-2143049',
-  'BO-2143049-BLU': 'BO-2143049',
-  'BO-2143049-ORG': 'BO-2143049',
-  'BO-2143030':     'BO-2143030',
-  'BO-2143042':     'BO-2143042',
-  'BO-2451233':     'BO-2451233',
-  'BO-2143033':     'BO-2143033',
-  'BO-2143032':     'BO-2143032',
-  'BO-2451232':     'BO-2451232',
-  'BO-2143041':     'BO-2143041',
-  'BO-2176091':     'BO-2176091',
-  'BO-2143058':     'BO-2143058',
+  'BO-2143023':'BO-2143023','BO-2143025':'BO-2143025','BO-2143048':'BO-2143048',
+  'BO-2754540':'BO-2754540','BO-2143049-BLK':'BO-2143049','BO-2143049-RED':'BO-2143049',
+  'BO-2143049-GRN':'BO-2143049','BO-2143049-BLU':'BO-2143049','BO-2143049-ORG':'BO-2143049',
+  'BO-2143030':'BO-2143030','BO-2143042':'BO-2143042','BO-2451233':'BO-2451233',
+  'BO-2143033':'BO-2143033','BO-2143032':'BO-2143032','BO-2451232':'BO-2451232',
+  'BO-2143041':'BO-2143041','BO-2176091':'BO-2176091','BO-2143058':'BO-2143058',
 };
 
 app.use('/webhook', express.raw({ type: 'application/json' }));
@@ -42,7 +30,7 @@ function log(level, msg, data) {
 
 function verifyShopifyWebhook(req) {
   const secret = CONFIG.SHOPIFY_WEBHOOK_SECRET;
-  if (!secret) { log('warn', 'No webhook secret — skipping verification'); return true; }
+  if (!secret) { log('warn', 'No webhook secret — skipping'); return true; }
   const hmac   = req.headers['x-shopify-hmac-sha256'];
   const digest = crypto.createHmac('sha256', secret).update(req.body).digest('base64');
   return hmac === digest;
@@ -61,65 +49,38 @@ function parsePhone(raw) {
 function mapAddress(order) {
   const addr     = order.shipping_address || order.billing_address || {};
   const customer = order.customer || {};
-  const rawPhone = addr.phone || customer.phone || (order.billing_address || {}).phone || '';
-  const phone    = parsePhone(rawPhone);
-
-  const firstLine = [addr.address1, addr.address2, addr.address3].filter(Boolean).join(', ');
-
-  // Map Shopify city → Bosta city name
+  const phone    = parsePhone(addr.phone || customer.phone || '');
+  const firstLine = [addr.address1, addr.address2].filter(Boolean).join(', ');
   const cityMap = {
-    'cairo': 'Cairo', 'القاهرة': 'Cairo',
-    'giza': 'Giza', 'الجيزة': 'Giza',
-    'alexandria': 'Alexandria', 'الإسكندرية': 'Alexandria',
-    '6th of october': 'Giza', 'october': 'Giza',
-    'sheikh zayed': 'Giza', 'new cairo': 'Cairo',
-    'maadi': 'Cairo', 'heliopolis': 'Cairo',
-    'nasr city': 'Cairo', 'zamalek': 'Cairo',
-    'el shorouk': 'Cairo', 'shorouk': 'Cairo',
-    'obour': 'Cairo', 'badr': 'Cairo',
+    'cairo':'Cairo','القاهرة':'Cairo','giza':'Giza','الجيزة':'Giza',
+    'alexandria':'Alexandria','6th of october':'Giza','october':'Giza',
+    'sheikh zayed':'Giza','new cairo':'Cairo','maadi':'Cairo',
+    'heliopolis':'Cairo','nasr city':'Cairo','zamalek':'Cairo',
+    'el shorouk':'Cairo','shorouk':'Cairo','obour':'Cairo','badr':'Cairo',
   };
-
-  const rawCity    = (addr.city || '').toLowerCase().trim();
-  const city       = cityMap[rawCity] || addr.city || 'Cairo';
-
-  // Use address2 as district if available, otherwise fall back to city
-  // Customers should put their area/neighbourhood in address2
-  const district   = addr.address2 || addr.city || city;
-
+  const city = cityMap[(addr.city||'').toLowerCase().trim()] || addr.city || 'Cairo';
   const fullName = addr.name ||
-    `${addr.first_name || ''} ${addr.last_name || ''}`.trim() ||
-    `${customer.first_name || ''} ${customer.last_name || ''}`.trim();
-
+    `${addr.first_name||''} ${addr.last_name||''}`.trim() ||
+    `${customer.first_name||''} ${customer.last_name||''}`.trim();
   return { phone, firstLine, city, fullName };
 }
 
-function buildBostaPayload(shopifyOrder) {
-  const address = mapAddress(shopifyOrder);
-
+function buildBostaPayload(order) {
+  const address = mapAddress(order);
   const items = [];
-  for (const item of shopifyOrder.line_items || []) {
-    const shopifySku = (item.sku || '').trim();
-    const bostaSku   = SKU_MAP[shopifySku];
-    if (!bostaSku) {
-      log('warn', `SKU not in map: "${shopifySku}" — skipping`, { title: item.title });
-      continue;
-    }
+  for (const item of order.line_items || []) {
+    const bostaSku = SKU_MAP[(item.sku||'').trim()];
+    if (!bostaSku) { log('warn', `SKU not in map: "${item.sku}" — skipping`); continue; }
     items.push({ bostaSku, qty: item.quantity });
   }
-
-  if (items.length === 0) throw new Error('No valid Bosta SKUs found in order');
-
-  const description = items.map(i => `${i.bostaSku} x${i.qty}`).join(', ');
-  const itemsCount  = items.reduce((sum, i) => sum + i.qty, 0);
-  const codAmount   = parseFloat(shopifyOrder.total_price || 0);
-
+  if (items.length === 0) throw new Error('No valid Bosta SKUs found');
   return {
     type: 10,
     specs: {
       packageType: 'Small',
       packageDetails: {
-        description: description,
-        itemsCount:  itemsCount,
+        description: items.map(i => `${i.bostaSku} x${i.qty}`).join(', '),
+        itemsCount:  items.reduce((s, i) => s + i.qty, 0),
       },
     },
     dropOffAddress: {
@@ -131,8 +92,8 @@ function buildBostaPayload(shopifyOrder) {
       lastName:  address.fullName.split(' ').slice(1).join(' ') || '-',
       phone:     address.phone,
     },
-    cod:               codAmount,
-    notes:             `Shopify Order #${shopifyOrder.order_number || shopifyOrder.id}`,
+    cod:               parseFloat(order.total_price || 0),
+    notes:             `Shopify Order #${order.order_number || order.id}`,
     allowToOpenPackage: true,
   };
 }
@@ -141,70 +102,37 @@ async function createBostaOrder(payload) {
   const res = await axios.post(
     `${CONFIG.BOSTA_API_URL}/deliveries?apiVersion=1`,
     payload,
-    {
-      headers: {
-        'Authorization': CONFIG.BOSTA_API_KEY,
-        'Content-Type':  'application/json',
-      },
-      timeout: 15000,
-    }
+    { headers: { 'Authorization': CONFIG.BOSTA_API_KEY, 'Content-Type': 'application/json' }, timeout: 15000 }
   );
   return res.data;
 }
 
 app.post('/webhook/orders/create', async (req, res) => {
   res.status(200).send('OK');
-
-  if (!verifyShopifyWebhook(req)) {
-    log('error', 'HMAC verification failed — ignoring');
-    return;
-  }
-
+  if (!verifyShopifyWebhook(req)) { log('error', 'HMAC failed'); return; }
   let order;
-  try {
-    order = JSON.parse(req.body.toString());
-  } catch (e) {
-    log('error', 'Failed to parse webhook body', { error: e.message });
-    return;
-  }
-
+  try { order = JSON.parse(req.body.toString()); }
+  catch (e) { log('error', 'Parse failed', { error: e.message }); return; }
   const orderNum = order.order_number || order.id;
-  log('info', `📦 New Shopify order: #${orderNum}`, {
-    customer: (order.shipping_address || {}).name,
-    total:    order.total_price,
-    items:    (order.line_items || []).map(i => `${i.sku} x${i.quantity}`),
+  log('info', `📦 New order: #${orderNum}`, {
+    customer: (order.shipping_address||{}).name,
+    total: order.total_price,
+    items: (order.line_items||[]).map(i => `${i.sku} x${i.quantity}`),
   });
-
   const address = mapAddress(order);
-  if (!address.phone) {
-    log('error', `❌ Order #${orderNum} — no valid phone number`, {
-      raw: (order.shipping_address || {}).phone || (order.customer || {}).phone || 'MISSING',
-    });
-    return;
-  }
-
+  if (!address.phone) { log('error', `❌ #${orderNum} — no valid phone`); return; }
   let payload;
-  try {
-    payload = buildBostaPayload(order);
-    log('info', `🚚 Sending to Bosta for #${orderNum}`, payload);
-  } catch (e) {
-    log('error', `❌ Build payload failed for #${orderNum}`, { error: e.message });
-    return;
-  }
-
+  try { payload = buildBostaPayload(order); log('info', `🚚 Sending to Bosta #${orderNum}`, payload); }
+  catch (e) { log('error', `❌ Payload build failed #${orderNum}`, { error: e.message }); return; }
   try {
     const result = await createBostaOrder(payload);
-    log('info', `✅ Bosta order created for Shopify #${orderNum}`, {
+    log('info', `✅ Bosta order created #${orderNum}`, {
       tracking: result?.data?.trackingNumber || result?.trackingNumber,
-      id:       result?.data?._id || result?._id,
     });
   } catch (err) {
-    log('error', `❌ Bosta API error for #${orderNum}`, err.response?.data || err.message);
+    log('error', `❌ Bosta API error #${orderNum}`, err.response?.data || err.message);
   }
 });
 
-app.get('/', (req, res) => {
-  res.json({ status: 'running', service: 'Smokehead → Bosta', time: new Date().toISOString() });
-});
-
+app.get('/', (req, res) => res.json({ status: 'running', time: new Date().toISOString() }));
 app.listen(PORT, () => log('info', `🔥 Running on port ${PORT}`));
