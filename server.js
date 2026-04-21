@@ -1,9 +1,3 @@
-/**
- * ============================================================
- *  SMOKEHEAD — Shopify → Bosta Auto-Fulfillment
- * ============================================================
- */
-
 const express = require('express');
 const axios   = require('axios');
 const crypto  = require('crypto');
@@ -48,7 +42,7 @@ function log(level, msg, data) {
 
 function verifyShopifyWebhook(req) {
   const secret = CONFIG.SHOPIFY_WEBHOOK_SECRET;
-  if (!secret) { log('warn', 'No webhook secret set — skipping verification'); return true; }
+  if (!secret) { log('warn', 'No webhook secret — skipping verification'); return true; }
   const hmac   = req.headers['x-shopify-hmac-sha256'];
   const digest = crypto.createHmac('sha256', secret).update(req.body).digest('base64');
   return hmac === digest;
@@ -72,6 +66,7 @@ function mapAddress(order) {
 
   const firstLine = [addr.address1, addr.address2].filter(Boolean).join(', ');
 
+  // Map Shopify city → Bosta city name
   const cityMap = {
     'cairo': 'Cairo', 'القاهرة': 'Cairo',
     'giza': 'Giza', 'الجيزة': 'Giza',
@@ -84,19 +79,23 @@ function mapAddress(order) {
     'obour': 'Cairo', 'badr': 'Cairo',
   };
 
-  const rawCity = (addr.city || '').toLowerCase().trim();
-  const city    = cityMap[rawCity] || addr.city || 'Cairo';
+  const rawCity    = (addr.city || '').toLowerCase().trim();
+  const city       = cityMap[rawCity] || addr.city || 'Cairo';
+
+  // Use address2 as district if available, otherwise fall back to city
+  // Customers should put their area/neighbourhood in address2
+  const district   = addr.address2 || addr.city || city;
+
   const fullName = addr.name ||
     `${addr.first_name || ''} ${addr.last_name || ''}`.trim() ||
     `${customer.first_name || ''} ${customer.last_name || ''}`.trim();
 
-  return { phone, firstLine, city, fullName };
+  return { phone, firstLine, city, district, fullName };
 }
 
 function buildBostaPayload(shopifyOrder) {
   const address = mapAddress(shopifyOrder);
 
-  // Collect valid SKUs and build description
   const items = [];
   for (const item of shopifyOrder.line_items || []) {
     const shopifySku = (item.sku || '').trim();
@@ -105,12 +104,10 @@ function buildBostaPayload(shopifyOrder) {
       log('warn', `SKU not in map: "${shopifySku}" — skipping`, { title: item.title });
       continue;
     }
-    items.push({ bostaSku, qty: item.quantity, title: item.title });
+    items.push({ bostaSku, qty: item.quantity });
   }
 
-  if (items.length === 0) {
-    throw new Error('No valid Bosta SKUs found in order');
-  }
+  if (items.length === 0) throw new Error('No valid Bosta SKUs found in order');
 
   const description = items.map(i => `${i.bostaSku} x${i.qty}`).join(', ');
   const itemsCount  = items.reduce((sum, i) => sum + i.qty, 0);
@@ -126,8 +123,9 @@ function buildBostaPayload(shopifyOrder) {
       },
     },
     dropOffAddress: {
-      firstLine: address.firstLine,
-      city:      address.city,
+      firstLine:    address.firstLine,
+      city:         address.city,
+      districtName: address.district,
     },
     receiver: {
       firstName: address.fullName.split(' ')[0] || address.fullName,
