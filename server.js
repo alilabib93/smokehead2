@@ -64,7 +64,7 @@ function mapAddress(order) {
   const rawPhone = addr.phone || customer.phone || (order.billing_address || {}).phone || '';
   const phone    = parsePhone(rawPhone);
 
-  const firstLine = [addr.address1, addr.address2].filter(Boolean).join(', ');
+  const firstLine = [addr.address1, addr.address2, addr.address3].filter(Boolean).join(', ');
 
   // Map Shopify city → Bosta city name
   const cityMap = {
@@ -90,7 +90,7 @@ function mapAddress(order) {
     `${addr.first_name || ''} ${addr.last_name || ''}`.trim() ||
     `${customer.first_name || ''} ${customer.last_name || ''}`.trim();
 
-  return { phone, firstLine, city, district, fullName };
+  return { phone, firstLine, city, fullName };
 }
 
 function buildBostaPayload(shopifyOrder) {
@@ -123,9 +123,8 @@ function buildBostaPayload(shopifyOrder) {
       },
     },
     dropOffAddress: {
-      firstLine:    address.firstLine,
-      city:         address.city,
-      districtName: address.district,
+      firstLine: address.firstLine,
+      city:      address.city,
     },
     receiver: {
       firstName: address.fullName.split(' ')[0] || address.fullName,
